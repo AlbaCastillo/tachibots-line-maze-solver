@@ -6,9 +6,22 @@ AF_DCMotor motori(1);  //Left motor - connected to terminal 1
 AF_DCMotor motord(2);  //Right motor - connected to terminal 2
 
 // Reflectance Sensors TCRT5000
-const uint8_t SensorCount = 6;
-const int pinIRd[SensorCount] = { 2, 4, 6, 8, 10, 12 };                    // Pines para los sensores infrarrojos
-int IRvalue[SensorCount] = { 0, 0, 0, 0, 0, 0 };  // Valores leídos de los sensores - high (on - black) or low (off - white)
+// Sensor arrays
+const uint8_t SensorCountSetup = 2;  // Sensors initialized in setup
+const uint8_t SensorCountPost = 4;  // Sensors initialized after motors start
+const uint8_t SensorCountTotal = SensorCountSetup + SensorCountPost;  // Total sensors
+
+const int pinIRdSetup[SensorCountSetup] = {6, 9};  // Pins configured in setup
+const int pinIRdPost[SensorCountPost] = {0, 2, 10, 12};      // Pins configured post-start
+
+int pinIRd[SensorCountTotal];                    // Pines para los sensores infrarrojos
+
+int IRvalueSetup[SensorCountSetup] = {0, 0};  // Sensor values for setup
+int IRvaluePost[SensorCountPost] = {0, 0, 0, 0};       // Sensor values for post-start
+int IRvalue[SensorCountTotal];  // Valores leídos de los sensores - high (on - black) or low (off - white)
+
+bool calibrated = false;  // Tracks whether calibration is complete
+bool postSensorsInitialized = false;  // Tracks whether post sensors are initialized
 
 
 // Path
@@ -36,15 +49,14 @@ float targetAngle = 0;  // Ángulo objetivo (90 o 180 grados)
 //const int Echo = 3;   //Pin digital 3 para el Echo del sensor
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(9600);
   Serial.println("Setup");
 
   //Configurando motores
-  motori.setSpeed(150);
+  motori.setSpeed(100);
   motori.run(RELEASE);
 
-  motord.setSpeed(150);
+  motord.setSpeed(100);
   motord.run(RELEASE);
   delay(100);
 
@@ -56,114 +68,116 @@ void setup() {
 
   lastTime = millis();
 
-  // configure the sensors
-  for (int i = 0; i < 6; i++) {
-    pinMode(pinIRd[i], INPUT);  // Configura cada pin como entrada
+  // Configure pins for setup sensors
+  for (int i = 0; i < SensorCountSetup; i++) {
+    pinMode(pinIRdSetup[i], INPUT_PULLUP);  // Configura cada pin como entrada
   }
-
 
   delay(500);
 }
 
 void loop() {
-  // Read Values
-  lineValue();
-  Serial.println("Loop");
-  delay(500);
+  if (!calibrated) {
+    performCalibration();
+  } else {
 
-  // put your main code here, to run repeatedly:
-  //Sensor position
-  //  D2(0)      -D6(2)-     D10(4)
-  // -D4(1)-     -D8(3)-    -D12(5)-
-
-  // D3(1), D4(2), D5(3), D7(5), For turn control
-  // D2(0) and D6(4) For goal control
-
-  delay(7);  // To make sampling rate around 100hz
-  /* Get new sensor events with the readings */
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
-  //
-  if (goal == 1) {
-    if (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {  // Positioned at the start line
-      go(shortestPath);                                                                          //
+    if (!postSensorsInitialized) {
+      // Initialize post sensors after motors start
+      initializePostSensors();
+      // Normal operation after calibration and post sensor initialization
+      Serial.println("Calibrated and post sensors initialized. Monitoring sensors...");
     }
-    stop();
-  }
 
-  for (int i = 0; i < 6; i++) {
-   // Lee cada sensor y almacena el valor en su posición correspondiente
-    Serial.print("Sensor ");
-    Serial.print(i);
-    Serial.print(": ");
-    Serial.println(IRvalue[i]);  // Mostrar valores en el monitor serial
-  }
-  delay(500);
-
-
-
-
-  //FORWARD Condition [001100] (Go straight "S")
-  if ((!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3]) || (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3])) {
-    Serial.println("Move FORWARD");
-    path += 'S';
-    front();
-  }
-
-  //U Turn Condition [000100] ("U")
-  else if ((!IRvalue[1]) && (!IRvalue[2]) && (IRvalue[3]) && (!IRvalue[5])) {
-    Serial.println("U-TURN");
-    path += 'U';
-    uturn();
-  }
-
-  //Left Turn Condition [010100] ("L")
-  else if ((IRvalue[1] && IRvalue[3]) || (IRvalue[0] && IRvalue[2])) {
-    Serial.println("Turn LEFT");
-    path += 'L';
-    left();
-  }
-
-  //Right Turn Condition [000101] ("R")
-  if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && IRvalue[3] && !IRvalue[4] && IRvalue[5]) {
-    Serial.println("Turn RIGHT");
-    path += 'R';
-    right();
-  }
-
-  //Stop Condition [111111] Final of the maze
-  if (IRvalue[0] && IRvalue[1] && IRvalue[2] && IRvalue[3] && IRvalue[4] && IRvalue[5]) {
-    Serial.println("Stop");
-    stop();
+    // Read Values
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
+    Serial.println("Loop");
     delay(500);
-  }
 
-  //Go a litle Back if [000000] to try to get back on track
-  if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
-    Serial.println("Go BACK");
-    back();
-  }
+    // put your main code here, to run repeatedly:
+    //Sensor position
+    //  D2(0)      -D6(2)-     D10(4)
+    // -D4(1)-     -D8(3)-    -D12(5)-
 
-  //When there are no turns but the road is not straight, curvatures with a minimum radius of 30cm
-  // [000001] turn slowly to the right until [000100] (While continuing to move forward, only slowing down on a single motor)
-  if ((!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])) {
-    gbontrackR();  //correct to the right
-  }
+    // D3(1), D4(2), D5(3), D7(5), For turn control
+    // D2(0) and D6(4) For goal control
 
-  //[010000] turn slowly to the left until [000100] (While continuing to move forward, only slowing down on a single motor)
-  if ((IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) || (IRvalue[0] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5])) {
-    gbontrackL();  //correct to the left
-  }
+    delay(7);  // To make sampling rate around 100hz
+    /* Get new sensor events with the readings */
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
 
-  simplifyPath();
+    //
+    if (goal == 1) {
+      if (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {  // Positioned at the start line
+        go(shortestPath);                                                                          //
+      }
+      stop();
+    }
+
+    debugInfraRed(IRvalue, SensorCountTotal, "All Sensor States");
+    delay(500);
+
+    //FORWARD Condition [001100] (Go straight "S")
+    if ((!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3]) || (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3])) {
+      Serial.println("Move FORWARD");
+      path += 'S';
+      front();
+    }
+
+    //U Turn Condition [000100] ("U")
+    else if ((!IRvalue[1]) && (!IRvalue[2]) && (IRvalue[3]) && (!IRvalue[5])) {
+      Serial.println("U-TURN");
+      path += 'U';
+      uturn();
+    }
+
+    //Left Turn Condition [010100] ("L")
+    else if ((IRvalue[1] && IRvalue[3]) || (IRvalue[0] && IRvalue[2])) {
+      Serial.println("Turn LEFT");
+      path += 'L';
+      left();
+    }
+
+    //Right Turn Condition [000101] ("R")
+    if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && IRvalue[3] && !IRvalue[4] && IRvalue[5]) {
+      Serial.println("Turn RIGHT");
+      path += 'R';
+      right();
+    }
+
+    //Stop Condition [111111] Final of the maze
+    if (IRvalue[0] && IRvalue[1] && IRvalue[2] && IRvalue[3] && IRvalue[4] && IRvalue[5]) {
+      Serial.println("Stop");
+      stop();
+      delay(500);
+    }
+
+    //Go a litle Back if [000000] to try to get back on track
+    if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
+      Serial.println("Go BACK");
+      back();
+    }
+
+    //When there are no turns but the road is not straight, curvatures with a minimum radius of 30cm
+    // [000001] turn slowly to the right until [000100] (While continuing to move forward, only slowing down on a single motor)
+    if ((!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])) {
+      gbontrackR();  //correct to the right
+    }
+
+    //[010000] turn slowly to the left until [000100] (While continuing to move forward, only slowing down on a single motor)
+    if ((IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) || (IRvalue[0] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5])) {
+      gbontrackL();  //correct to the left
+    }
+
+    simplifyPath();
+  }
 }
 
 void front() {
   //
-  motori.run(FORWARD);
-  motord.run(FORWARD);
-  delay(100);
+  motori.run(RELEASE);
+  motord.run(RELEASE);
+  delay(10);
   Serial.println("Front");
   Serial.println(!((IRvalue[3]) && (IRvalue[1] || IRvalue[5])));
   while (!((IRvalue[3]) && (IRvalue[1] || IRvalue[5]))) {
@@ -175,7 +189,7 @@ void front() {
     Serial.println("Avanzar");
     delay(100);
 
-    lineValue();
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
 
     // [000001] turn slowly to the right until [000100]
     if ((!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])) {
@@ -190,7 +204,7 @@ void front() {
       // Serial.println("Go BACK");
       back();
     }
-    lineValue();
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
   }
   motori.run(RELEASE);
   motord.run(RELEASE);
@@ -320,7 +334,7 @@ void simplifyPath() {
 
 
 void gbontrackR() {  //while is not [001100] do this
-  lineValue();
+  lineValue(pinIRd, IRvalue, SensorCountTotal);
   Serial.println("Ir a la derecha");
   while (!IRvalue[3]) {
     motori.setSpeed(150);
@@ -329,7 +343,7 @@ void gbontrackR() {  //while is not [001100] do this
     motori.run(FORWARD);
     motord.run(FORWARD);
     delay(10);
-    lineValue();
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
   }
   motori.setSpeed(100);
   motord.setSpeed(100);
@@ -337,7 +351,7 @@ void gbontrackR() {  //while is not [001100] do this
 }
 
 void gbontrackL() {  //while is not [001100] do this
-  lineValue();
+  lineValue(pinIRd, IRvalue, SensorCountTotal);
   Serial.println("Ir a la izquierda");
   while (!IRvalue[3]) {
     motori.setSpeed(80);
@@ -346,7 +360,7 @@ void gbontrackL() {  //while is not [001100] do this
     motori.run(FORWARD);
     motord.run(FORWARD);
     delay(10);
-    lineValue();
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
   }
   motori.setSpeed(100);
   motord.setSpeed(100);
@@ -366,13 +380,84 @@ void go(String path) {  // Follow the recorded path
   stop();
 }
 
-void lineValue() {
-  for (int i = 0; i < 6; i++) {
-    IRvalue[i] = digitalRead(pinIRd[i]);  // Lee cada sensor y almacena el valor en su posición correspondiente
-    //Serial.print("Sensor ");
-    //Serial.print(i);
-    //Serial.print(": ");
-    //Serial.println(IRvalue[i]);  // Mostrar valores en el monitor serial
+void lineValue(const int *pins, int *values, uint8_t count) {
+  for (int i = 0; i < count; i++) {
+    values[i] = digitalRead(pins[i]);
   }
   delay(10);
+}
+
+// Function to print sensor debug messages
+void debugInfraRed(const int *values, uint8_t count, const char *label) {
+  Serial.print(label);
+  Serial.print(": ");
+  for (int i = 0; i < count; i++) {
+    Serial.print(values[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+}
+
+// Function to perform calibration
+void performCalibration() {
+  Serial.println("Calibrating...");
+
+  // Check if all setup sensors are in air (all HIGH)
+  bool allSensorsHigh = true;
+  lineValue(pinIRdSetup, IRvalueSetup, SensorCountSetup);
+
+  for (int i = 0; i < SensorCountSetup; i++) {
+    if (IRvalueSetup[i] == LOW) {
+      allSensorsHigh = false;
+    }
+  }
+
+  debugInfraRed(IRvalueSetup, SensorCountSetup, "Setup Sensor States");
+
+  if (allSensorsHigh) {
+    Serial.println("All setup sensors detect air. Waiting for black signal...");
+
+    // Wait until any setup sensor detects black (LOW)
+    bool blackDetected = false;
+    while (!blackDetected) {
+      lineValue(pinIRdSetup, IRvalueSetup, SensorCountSetup);
+      for (int i = 0; i < SensorCountSetup; i++) {
+        if (IRvalueSetup[i] == LOW) {
+          blackDetected = true;
+          break;
+        }
+      }
+      delay(100);  // Short delay for stability
+    }
+
+    Serial.println("Black detected! Starting in 2 seconds...");
+    delay(2000);  // Wait 2 seconds
+    calibrated = true;
+
+    // Start motors
+    motori.run(FORWARD);
+    motord.run(FORWARD);
+  }
+
+  delay(100);  // Small delay for stability
+}
+
+// Function to initialize post sensors and the combined array
+void initializePostSensors() {
+  Serial.println("Initializing post sensors...");
+  
+  // Initialize post sensors
+  for (int i = 0; i < SensorCountPost; i++) {
+    pinMode(pinIRdPost[i], INPUT_PULLUP);
+  }
+
+  pinIRd[0] = pinIRdPost[0];
+  pinIRd[1] = pinIRdPost[1];
+  pinIRd[2] = pinIRdSetup[0];
+  pinIRd[3] = pinIRdSetup[1];
+  pinIRd[4] = pinIRdPost[2];
+  pinIRd[5] = pinIRdPost[3];
+
+  postSensorsInitialized = true;
+  Serial.println("Post sensors initialized and combined array ready.");
 }
