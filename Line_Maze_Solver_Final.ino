@@ -1,9 +1,17 @@
 // Line Maze Solver (LSRB Algorithm)
+#include <AFMotor.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
 
 //Motors
-#include <AFMotor.h>
 AF_DCMotor motori(1);  //Left motor - connected to terminal 1
 AF_DCMotor motord(2);  //Right motor - connected to terminal 2
+
+// Speed Constants
+const int NORMAL_SPEED = 100;
+const int HIGHER_SPEED = 150;
+const int LOWER_SPEED = 80;
 
 // Reflectance Sensors TCRT5000
 // Sensor arrays
@@ -11,52 +19,59 @@ const uint8_t SensorCountSetup = 2;  // Sensors initialized in setup
 const uint8_t SensorCountPost = 4;  // Sensors initialized after motors start
 const uint8_t SensorCountTotal = SensorCountSetup + SensorCountPost;  // Total sensors
 
-const int pinIRdSetup[SensorCountSetup] = {6, 9};  // Pins configured in setup
+//Sensor position
+//  D2(0)      -D6(2)-     D10(4)
+// -D9(1)-     -D9(3)-    -D12(5)-
+// D3(1), D4(2), D5(3), D7(5), For turn control
+// D2(0) and D6(4) For goal control
+const int pinIRdSetup[SensorCountSetup] = {6, 9};            // Pins configured in setup
 const int pinIRdPost[SensorCountPost] = {0, 2, 10, 12};      // Pins configured post-start
+int pinIRd[SensorCountTotal];                                // Pines para los sensores infrarrojos
 
-int pinIRd[SensorCountTotal];                    // Pines para los sensores infrarrojos
-
-int IRvalueSetup[SensorCountSetup] = {0, 0};  // Sensor values for setup
-int IRvaluePost[SensorCountPost] = {0, 0, 0, 0};       // Sensor values for post-start
-int IRvalue[SensorCountTotal];  // Valores leídos de los sensores - high (on - black) or low (off - white)
+int IRvalueSetup[SensorCountSetup] = {0, 0};            // Sensor values for setup
+int IRvaluePost[SensorCountPost] = {0, 0, 0, 0};        // Sensor values for post-start
+int IRvalue[SensorCountTotal];                          // Values readed by sensors - high(on-black) or low(off-white)
 
 bool calibrated = false;  // Tracks whether calibration is complete
 bool postSensorsInitialized = false;  // Tracks whether post sensors are initialized
 
-
-// Path
+// Path Variables
 String path;          // Path recorder
 String shortestPath;  // Records the shortest path after optimization
 int goal = 0;         // find the goal? 0=no - 1=yes
 
-// Gyroscope readings from Adafruit MPU6050
-
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
-#include <Wire.h>
-
-Adafruit_MPU6050 mpu;
-
 // For calculate the degrees of the turn
-float deltaTime;
+Adafruit_MPU6050 mpu;   // Gyroscope readings from Adafruit MPU6050
 unsigned long lastTime;
+float deltaTime;
 float angle = 0;        // Almacena el ángulo acumulado
-float targetAngle = 0;  // Ángulo objetivo (90 o 180 grados)
 
+// Function Prototypes
+void setup();
+void loop();
+void front();
+void turn(float targetAngle);
+void updateGyro();
+void back();
+void stop();
+void simplifyPath();
+void gbontrackR();
+void gbontrackL();
+void go(String path);
+void lineValue(const int *pins, int *values, uint8_t count);
+void debugInfraRed(const int *values, uint8_t count, const char *label);
+void performCalibration();
+void initializePostSensors();
 
-// Ultrasonic Sensor
-//const int Trigger = 2;   //Pin digital 2 para el Trigger del sensor
-//const int Echo = 3;   //Pin digital 3 para el Echo del sensor
-
+// Functions
 void setup() {
   Serial.begin(9600);
   Serial.println("Setup");
 
   //Configurando motores
-  motori.setSpeed(100);
+  motori.setSpeed(NORMAL_SPEED);
+  motord.setSpeed(NORMAL_SPEED);
   motori.run(RELEASE);
-
-  motord.setSpeed(100);
   motord.run(RELEASE);
   delay(100);
 
@@ -81,27 +96,17 @@ void loop() {
     performCalibration();
   } else {
 
+    // Initialize post sensors after motors start
     if (!postSensorsInitialized) {
-      // Initialize post sensors after motors start
       initializePostSensors();
-      // Normal operation after calibration and post sensor initialization
-      Serial.println("Calibrated and post sensors initialized. Monitoring sensors...");
     }
 
     // Read Values
     lineValue(pinIRd, IRvalue, SensorCountTotal);
     Serial.println("Loop");
+    debugInfraRed(IRvalue, SensorCountTotal, "All Sensor States");
     delay(500);
 
-    // put your main code here, to run repeatedly:
-    //Sensor position
-    //  D2(0)      -D6(2)-     D10(4)
-    // -D4(1)-     -D8(3)-    -D12(5)-
-
-    // D3(1), D4(2), D5(3), D7(5), For turn control
-    // D2(0) and D6(4) For goal control
-
-    delay(7);  // To make sampling rate around 100hz
     /* Get new sensor events with the readings */
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -114,9 +119,6 @@ void loop() {
       stop();
     }
 
-    debugInfraRed(IRvalue, SensorCountTotal, "All Sensor States");
-    delay(500);
-
     //FORWARD Condition [001100] (Go straight "S")
     if ((!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3]) || (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3])) {
       Serial.println("Move FORWARD");
@@ -128,21 +130,21 @@ void loop() {
     else if ((!IRvalue[1]) && (!IRvalue[2]) && (IRvalue[3]) && (!IRvalue[5])) {
       Serial.println("U-TURN");
       path += 'U';
-      uturn();
+      turn(180);
     }
 
     //Left Turn Condition [010100] ("L")
     else if ((IRvalue[1] && IRvalue[3]) || (IRvalue[0] && IRvalue[2])) {
       Serial.println("Turn LEFT");
       path += 'L';
-      left();
+      turn(90);
     }
 
     //Right Turn Condition [000101] ("R")
     if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && IRvalue[3] && !IRvalue[4] && IRvalue[5]) {
       Serial.println("Turn RIGHT");
       path += 'R';
-      right();
+      turn(-90);
     }
 
     //Stop Condition [111111] Final of the maze
@@ -174,34 +176,32 @@ void loop() {
 }
 
 void front() {
-  //
   motori.run(RELEASE);
   motord.run(RELEASE);
   delay(10);
-  Serial.println("Front");
-  Serial.println(!((IRvalue[3]) && (IRvalue[1] || IRvalue[5])));
+
+  // Proposed condition (IRvalue[2] && IRvalue[3] && !IRvalue[0] && !IRvalue[1] && !IRvalue[4] && !IRvalue[5])
+  // The robot moves forward while the middle sensors detect the line, and side sensors detect no line.
   while (!((IRvalue[3]) && (IRvalue[1] || IRvalue[5]))) {
-    //
-    Serial.print("while");
+    Serial.print("while (FORWARD)");
     Serial.println(!((IRvalue[3]) && (IRvalue[1] || IRvalue[5])));
     motori.run(FORWARD);
     motord.run(FORWARD);
-    Serial.println("Avanzar");
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
     delay(100);
 
-    lineValue(pinIRd, IRvalue, SensorCountTotal);
-
-    // [000001] turn slowly to the right until [000100]
+    // Correct to the right if necessary => [000001] turn slowly to the right until [000100]
+    // Proposed Condition: IRvalue[4] || IRvalue[5]
     if ((!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])) {
       gbontrackR();  // correct to the right
     }
-    // [010000] turn slowly to the left until [000100]
+    // Correct to the left if necessary => [010000] turn slowly to the left until [000100]
+    // Proposed Condition: (IRvalue[0] || IRvalue[1])
     else if ((IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) || (IRvalue[0] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5])) {
       gbontrackL();  //correct to the left
     }
     //Go a litle Back if [000000] to try to get back on track
     else if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
-      // Serial.println("Go BACK");
       back();
     }
     lineValue(pinIRd, IRvalue, SensorCountTotal);
@@ -211,17 +211,21 @@ void front() {
   delay(10);
 }
 
-void left() {  //All bifurcations will be at 90° - Using the gyroscope
+
+void turn(float targetAngle) {
   motori.run(RELEASE);
   motord.run(RELEASE);
   delay(10);
   angle = 0;            // Reset the accumulated angle
-  targetAngle = 90;     // Set the target angle
   lastTime = millis();  // Reset the time
 
-  while (angle < targetAngle) {  // Turn until the target angle is reached
-    motori.run(BACKWARD);
-    motord.run(FORWARD);
+  // Determine motor directions based on targetAngle
+  int motorLeftDirection = targetAngle > 0 ? BACKWARD : FORWARD;
+  int motorRightDirection = targetAngle > 0 ? FORWARD : BACKWARD;
+
+  while (abs(angle) < abs(targetAngle)) {  // Turn until the target angle is reached
+    motori.run(motorLeftDirection);
+    motord.run(motorRightDirection);
     delay(5);
     Serial.println(angle);
 
@@ -233,60 +237,10 @@ void left() {  //All bifurcations will be at 90° - Using the gyroscope
   motord.run(FORWARD);
   delay(10);
 
-  // stop the motors
+  // Stop the motors
   stop();
 }
 
-void right() {  // -90° Using the gyroscope
-  motori.run(RELEASE);
-  motord.run(RELEASE);
-  delay(10);
-  angle = 0;            // Reset the accumulated angle
-  targetAngle = -90;    // Set the target angle
-  lastTime = millis();  // Reset the time
-
-  while (angle < targetAngle) {  // Turn until the target angle is reached
-    motori.run(FORWARD);
-    motord.run(BACKWARD);
-    delay(5);
-    Serial.println(angle);
-
-    updateGyro();
-  }
-  delay(100);
-
-  motori.run(FORWARD);
-  motord.run(FORWARD);
-  delay(10);
-
-  // stop the motors
-  stop();
-}
-
-void uturn() {  // With the gyroscope measure a 180-degree turn
-  motori.run(RELEASE);
-  motord.run(RELEASE);
-  delay(10);
-  angle = 0;            // Reset the accumulated angle
-  targetAngle = 180;    // Set the target angle
-  lastTime = millis();  // Reset the time
-
-  while (angle < targetAngle) {  // Turn until the target angle is reached
-    motori.run(BACKWARD);
-    motord.run(FORWARD);
-    delay(5);
-
-    updateGyro();
-  }
-  delay(100);
-
-  motori.run(FORWARD);
-  motord.run(FORWARD);
-  delay(10);
-
-  // stop the motors
-  stop();
-}
 
 void updateGyro() {
   sensors_event_t a, g, temp;
@@ -296,9 +250,11 @@ void updateGyro() {
   deltaTime = (currentTime - lastTime) / 1000.0;
   lastTime = currentTime;
 
+  //TODO: Chequear funcionamiento cuando tenga que girar a la derecha (angulos negativos)
   float gyroZ = g.gyro.z * (180 / PI);  // rad/s a deg/s
   angle += gyroZ * deltaTime;
 }
+
 
 void back() {
   motori.run(BACKWARD);
@@ -309,11 +265,13 @@ void back() {
   delay(10);
 }
 
+
 void stop() {
   motori.run(RELEASE);
   motord.run(RELEASE);
   delay(50);
 }
+
 
 // Function to optimize the path by simplifying it
 void simplifyPath() {
@@ -335,50 +293,71 @@ void simplifyPath() {
 
 void gbontrackR() {  //while is not [001100] do this
   lineValue(pinIRd, IRvalue, SensorCountTotal);
-  Serial.println("Ir a la derecha");
+  Serial.println("Adjusting to the right");
+  motori.setSpeed(HIGHER_SPEED);
+  motord.setSpeed(LOWER_SPEED);
+
+  // Proposed Condition: (!IRvalue[2] || !IRvalue[3])
   while (!IRvalue[3]) {
-    motori.setSpeed(150);
-    motord.setSpeed(80);
-    delay(10);
     motori.run(FORWARD);
     motord.run(FORWARD);
     delay(10);
     lineValue(pinIRd, IRvalue, SensorCountTotal);
+
+    // TODO: Check if the line is lost
+    // if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
+    //   Serial.println("Line lost during right correction");
+    //   back();
+    //   break;
+    // }
   }
-  motori.setSpeed(100);
-  motord.setSpeed(100);
+
+  // Reset motor speeds
+  motori.setSpeed(NORMAL_SPEED);
+  motord.setSpeed(NORMAL_SPEED);
   delay(10);
 }
 
+
 void gbontrackL() {  //while is not [001100] do this
   lineValue(pinIRd, IRvalue, SensorCountTotal);
-  Serial.println("Ir a la izquierda");
+  Serial.println("Adjusting to the left");
+  motori.setSpeed(LOWER_SPEED);
+  motord.setSpeed(HIGHER_SPEED);
+
+  // Proposed Condition: (!IRvalue[2] || !IRvalue[3]) 
   while (!IRvalue[3]) {
-    motori.setSpeed(80);
-    motord.setSpeed(150);
-    delay(20);
     motori.run(FORWARD);
     motord.run(FORWARD);
     delay(10);
     lineValue(pinIRd, IRvalue, SensorCountTotal);
+
+    // TODO: Check if the line is lost
+    // if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
+    //   Serial.println("Line lost during left correction");
+    //   back();
+    //   break;
+    // }
   }
-  motori.setSpeed(100);
-  motord.setSpeed(100);
+
+  // Reset motor speeds
+  motori.setSpeed(NORMAL_SPEED);
+  motord.setSpeed(NORMAL_SPEED);
   delay(10);
 }
+
 
 void go(String path) {  // Follow the recorded path
   for (int i = 0; i < path.length(); i++) {
     char step = path[i];
-    if (step == 'S') {
-      front();
-    } else if (step == 'L') left();
-    else if (step == 'R') right();
-    else if (step == 'U') uturn();
+    if (step == 'S') front();
+    else if (step == 'L') turn(90);
+    else if (step == 'R') turn(-90);
+    else if (step == 'U') turn(180);
   }
-  //uturn();
   stop();
 }
+
 
 void lineValue(const int *pins, int *values, uint8_t count) {
   for (int i = 0; i < count; i++) {
@@ -386,6 +365,7 @@ void lineValue(const int *pins, int *values, uint8_t count) {
   }
   delay(10);
 }
+
 
 // Function to print sensor debug messages
 void debugInfraRed(const int *values, uint8_t count, const char *label) {
@@ -397,6 +377,7 @@ void debugInfraRed(const int *values, uint8_t count, const char *label) {
   }
   Serial.println();
 }
+
 
 // Function to perform calibration
 void performCalibration() {
@@ -442,6 +423,7 @@ void performCalibration() {
   delay(100);  // Small delay for stability
 }
 
+
 // Function to initialize post sensors and the combined array
 void initializePostSensors() {
   Serial.println("Initializing post sensors...");
@@ -460,4 +442,7 @@ void initializePostSensors() {
 
   postSensorsInitialized = true;
   Serial.println("Post sensors initialized and combined array ready.");
+
+  // Normal operation after calibration and post sensor initialization
+  Serial.println("Calibrated and post sensors initialized. Monitoring sensors...");
 }
