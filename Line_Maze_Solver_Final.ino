@@ -9,9 +9,9 @@ AF_DCMotor motori(1);  //Left motor - connected to terminal 1
 AF_DCMotor motord(2);  //Right motor - connected to terminal 2
 
 // Speed Constants
-const int NORMAL_SPEED = 100;
-const int HIGHER_SPEED = 150;
-const int LOWER_SPEED = 80;
+const int NORMAL_SPEED = 80;
+const int HIGHER_SPEED = 120;
+const int LOWER_SPEED = 40;
 
 // Reflectance Sensors TCRT5000
 // Sensor arrays
@@ -24,8 +24,9 @@ const uint8_t SensorCountTotal = SensorCountSetup + SensorCountPost;  // Total s
 // -D9(1)-     -D9(3)-    -D12(5)-
 // D3(1), D4(2), D5(3), D7(5), For turn control
 // D2(0) and D6(4) For goal control
-const int pinIRdSetup[SensorCountSetup] = {6, 9};            // Pins configured in setup
-const int pinIRdPost[SensorCountPost] = {0, 2, 10, 12};      // Pins configured post-start
+const int pinIRdSetup[SensorCountSetup] = {10, 9};            // Pins configured in setup
+const int pinIRdPost[SensorCountPost] = {6, 0, 2, 2};      // Pins configured post-start
+// const int pinIRdPost[SensorCountPost] = {6, 0, 2, 12};      // Pins configured post-start
 int pinIRd[SensorCountTotal];                                // Pines para los sensores infrarrojos
 
 int IRvalueSetup[SensorCountSetup] = {0, 0};            // Sensor values for setup
@@ -120,17 +121,11 @@ void loop() {
     }
 
     //FORWARD Condition [001100] (Go straight "S")
-    if ((!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3]) || (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3])) {
+    if (!IRvalue[0] && !IRvalue[1] && IRvalue[2]) {
+    // if ((!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3]) || (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3])) {
       Serial.println("Move FORWARD");
       path += 'S';
       front();
-    }
-
-    //U Turn Condition [000100] ("U")
-    else if ((!IRvalue[1]) && (!IRvalue[2]) && (IRvalue[3]) && (!IRvalue[5])) {
-      Serial.println("U-TURN");
-      path += 'U';
-      turn(180);
     }
 
     //Left Turn Condition [010100] ("L")
@@ -141,14 +136,22 @@ void loop() {
     }
 
     //Right Turn Condition [000101] ("R")
-    if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && IRvalue[3] && !IRvalue[4] && IRvalue[5]) {
+    // else if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && IRvalue[3] && !IRvalue[4] && IRvalue[5]) {
+    else if ((IRvalue[5] && IRvalue[3]) || (IRvalue[4] && IRvalue[2])) {
       Serial.println("Turn RIGHT");
       path += 'R';
       turn(-90);
     }
 
+    //U Turn Condition [000100] ("U")
+    else if (!IRvalue[3] && (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[4] && !IRvalue[5])) {
+      Serial.println("U-TURN");
+      path += 'U';
+      turn(180);
+    }
+
     //Stop Condition [111111] Final of the maze
-    if (IRvalue[0] && IRvalue[1] && IRvalue[2] && IRvalue[3] && IRvalue[4] && IRvalue[5]) {
+    else if (IRvalue[0] && IRvalue[1] && IRvalue[2] && IRvalue[3] && IRvalue[4] && IRvalue[5]) {
       Serial.println("Stop");
       stop();
       delay(500);
@@ -220,14 +223,14 @@ void turn(float targetAngle) {
   lastTime = millis();  // Reset the time
 
   // Determine motor directions based on targetAngle
-  int motorLeftDirection = targetAngle > 0 ? BACKWARD : FORWARD;
-  int motorRightDirection = targetAngle > 0 ? FORWARD : BACKWARD;
+  int motorLeftDirection = (targetAngle > 0) ? BACKWARD : FORWARD;
+  int motorRightDirection = (targetAngle > 0) ? FORWARD : BACKWARD;
 
   while (abs(angle) < abs(targetAngle)) {  // Turn until the target angle is reached
     motori.run(motorLeftDirection);
     motord.run(motorRightDirection);
     delay(5);
-    Serial.println(angle);
+    // Serial.println(angle);
 
     updateGyro();
   }
@@ -294,11 +297,19 @@ void simplifyPath() {
 void gbontrackR() {  //while is not [001100] do this
   lineValue(pinIRd, IRvalue, SensorCountTotal);
   Serial.println("Adjusting to the right");
+  float higherSpeed = HIGHER_SPEED;
+  float lowerSpeed = LOWER_SPEED;
   motori.setSpeed(HIGHER_SPEED);
   motord.setSpeed(LOWER_SPEED);
 
   // Proposed Condition: (!IRvalue[2] || !IRvalue[3])
-  while (!IRvalue[3]) {
+  while (!IRvalue[3] || !IRvalue[2]) {
+    Serial.print("HighSpeed: ");
+    Serial.println(higherSpeed);
+    Serial.print("LowSpeed: ");
+    Serial.println(lowerSpeed);
+    motori.setSpeed(higherSpeed);
+    motord.setSpeed(lowerSpeed);
     motori.run(FORWARD);
     motord.run(FORWARD);
     delay(10);
@@ -310,6 +321,9 @@ void gbontrackR() {  //while is not [001100] do this
     //   back();
     //   break;
     // }
+
+    higherSpeed +=0.2;
+    lowerSpeed -=0.2;
   }
 
   // Reset motor speeds
@@ -324,9 +338,17 @@ void gbontrackL() {  //while is not [001100] do this
   Serial.println("Adjusting to the left");
   motori.setSpeed(LOWER_SPEED);
   motord.setSpeed(HIGHER_SPEED);
+  float higherSpeed = HIGHER_SPEED;
+  float lowerSpeed = LOWER_SPEED;
 
   // Proposed Condition: (!IRvalue[2] || !IRvalue[3]) 
-  while (!IRvalue[3]) {
+  while (!IRvalue[3] || !IRvalue[2]) {
+    Serial.print("HighSpeed: ");
+    Serial.println(higherSpeed);
+    Serial.print("LowSpeed: ");
+    Serial.println(lowerSpeed);
+    motori.setSpeed(lowerSpeed);
+    motord.setSpeed(higherSpeed);
     motori.run(FORWARD);
     motord.run(FORWARD);
     delay(10);
@@ -338,6 +360,9 @@ void gbontrackL() {  //while is not [001100] do this
     //   back();
     //   break;
     // }
+
+    higherSpeed +=0.2;
+    lowerSpeed -=0.2;
   }
 
   // Reset motor speeds
