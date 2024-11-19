@@ -305,8 +305,7 @@ void turn(char direction) {
   delay(10);
 
   // Reset motor speeds to normal
-  motori.setSpeed(NORMAL_SPEED);
-  motord.setSpeed(NORMAL_SPEED);
+  setMotorSpeeds(FORWARD, FORWARD, NORMAL_SPEED, NORMAL_SPEED);
 }
 
 // Function to set motor speeds and directions
