@@ -28,13 +28,13 @@ const uint8_t SensorCountTotal = SensorCountSetup + SensorCountPost;  // Total s
 
 
 // Sensor arrays digital pins
-const int pinIRdSetup[SensorCountSetup] = {10, 9};            // Pins configured in setup
-const int pinIRdPost[SensorCountPost] = {6, 0, 2, 2};      // Pins configured post-start
+// const int pinIRdSetup[SensorCountSetup] = {10, 9};            // Pins configured in setup
+// const int pinIRdPost[SensorCountPost] = {6, 0, 2, 2};      // Pins configured post-start
 // const int pinIRdPost[SensorCountPost] = {6, 0, 2, 12};      // Pins configured post-start
 
 // TODO: Sensor arrays analog pins
-// const int pinIRdSetup[SensorCountSetup] = {A0, A1};       // Pins configured in setup
-// const int pinIRdPost[SensorCountPost] = {A2, A3, A4, A5}; // Pins configured post-start
+const int pinIRdSetup[SensorCountSetup] = {A3, A2};       // Pins configured in setup
+const int pinIRdPost[SensorCountPost] = {A5, A4, A1, A0}; // Pins configured post-start
 
 int pinIRd[SensorCountTotal];                                // Pines para los sensores infrarrojos
 const int THRESHOLD = 500; // For a single threshold
