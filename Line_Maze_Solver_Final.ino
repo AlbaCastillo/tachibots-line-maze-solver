@@ -13,6 +13,9 @@ const int NORMAL_SPEED = 80;
 const int HIGHER_SPEED = 120;
 const int LOWER_SPEED = 40;
 const float SPEED_INCREMENT = 0.2;
+const int TURN_HIGHER_SPEED = 120;
+const int TURN_LOWER_SPEED = 40;
+const float TURN_SPEED_INCREMENT = 0.2;
 
 // Reflectance Sensors TCRT5000
 // Sensor arrays
@@ -37,7 +40,7 @@ const int pinIRdSetup[SensorCountSetup] = {A3, A2};       // Pins configured in 
 const int pinIRdPost[SensorCountPost] = {A5, A4, A1, A0}; // Pins configured post-start
 
 int pinIRd[SensorCountTotal];                                // Pines para los sensores infrarrojos
-const int THRESHOLD = 500; // For a single threshold
+const int THRESHOLD = 469; // For a single threshold
 // const int thresholds[SensorCountTotal] = {500, 500, 500, 505, 495, 500}; // For individual thresholds per sensor:
 
 int IRvalueSetup[SensorCountSetup] = {0, 0};            // Sensor values for setup
@@ -245,14 +248,14 @@ void turn(char direction) {
     // Both motors move forward
     leftDirection = FORWARD;
     rightDirection = FORWARD;
-    leftSpeed = LOWER_SPEED;
-    rightSpeed = HIGHER_SPEED;
+    leftSpeed = TURN_LOWER_SPEED;
+    rightSpeed = TURN_HIGHER_SPEED;
   } else if (direction == 'R') { // Right turn
     // Both motors move forward
     leftDirection = FORWARD;
     rightDirection = FORWARD;
-    leftSpeed = HIGHER_SPEED;
-    rightSpeed = LOWER_SPEED;
+    leftSpeed = TURN_HIGHER_SPEED;
+    rightSpeed = TURN_LOWER_SPEED;
   } else if (direction == 'U') { // U-turn
     // Left motor backward, right motor forward
     leftDirection = BACKWARD;
@@ -275,16 +278,16 @@ void turn(char direction) {
     // Adjust speeds incrementally
     if (direction == 'L') {
       // Turn left by decreasing left motor speed, increasing right motor speed
-      leftSpeed -= SPEED_INCREMENT; // Decrease left speed
-      rightSpeed += SPEED_INCREMENT; // Increase right speed
+      leftSpeed -= TURN_SPEED_INCREMENT; // Decrease left speed
+      rightSpeed += TURN_SPEED_INCREMENT; // Increase right speed
     } else if (direction == 'R') {
       // Turn right by increasing left motor speed, decreasing right motor speed
-      leftSpeed += SPEED_INCREMENT; // Increase left speed
-      rightSpeed -= SPEED_INCREMENT; // Decrease right speed
+      leftSpeed += TURN_SPEED_INCREMENT; // Increase left speed
+      rightSpeed -= TURN_SPEED_INCREMENT; // Decrease right speed
     } else if (direction == 'U') {
       // For U-turns, both motors run at higher speeds, opposite directions
-      leftSpeed += SPEED_INCREMENT;
-      rightSpeed += SPEED_INCREMENT;
+      leftSpeed += TURN_SPEED_INCREMENT;
+      rightSpeed += TURN_SPEED_INCREMENT;
     }
 
     // Apply motor speeds and directions using the new function
@@ -446,16 +449,16 @@ void go(String path) {  // Follow the recorded path
 
 
 // Digital Version
-void lineValue(const int *pins, int *values, uint8_t count) {
-  for (int i = 0; i < count; i++) {
-    values[i] = digitalRead(pins[i]);
-  }
-  delay(10);
-}
+// void lineValue(const int *pins, int *values, uint8_t count) {
+//   for (int i = 0; i < count; i++) {
+//     values[i] = digitalRead(pins[i]);
+//   }
+//   delay(10);
+// }
 
 
 // TODO: Analog Version
-/*
+
 void lineValue(const int *pins, int *values, uint8_t count) {
   for (int i = 0; i < count; i++) {
     int sensorValue = analogRead(pins[i]);
@@ -473,7 +476,7 @@ void lineValue(const int *pins, int *values, uint8_t count) {
   }
   delay(10);
 }
-*/
+
 
 
 // Function to print sensor debug messages
