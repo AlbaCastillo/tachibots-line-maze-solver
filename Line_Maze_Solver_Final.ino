@@ -91,10 +91,10 @@ void setup() {
   delay(100);
 
   // MPU Configuration
-  if (!mpu.begin()) {
-    Serial.println("Failed to find MPU6050");
-  }
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  // if (!mpu.begin()) {
+  //   Serial.println("Failed to find MPU6050");
+  // }
+  // mpu.setGyroRange(MPU6050_RANGE_500_DEG);
 
   lastTime = millis();
 
@@ -123,8 +123,8 @@ void loop() {
     delay(500);
 
     /* Get new sensor events with the readings */
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
+    // sensors_event_t a, g, temp;
+    // mpu.getEvent(&a, &g, &temp);
 
     //
     if (goal == 1) {
@@ -462,7 +462,7 @@ void go(String path) {  // Follow the recorded path
 void lineValue(const int *pins, int *values, uint8_t count) {
   for (int i = 0; i < count; i++) {
     int sensorValue = analogRead(pins[i]);
-    if (sensorValue < THRESHOLD) {
+    if (sensorValue > THRESHOLD) {
       values[i] = 1; // Black line detected
     } else {
       values[i] = 0; // White surface detected
