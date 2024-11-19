@@ -12,6 +12,7 @@ AF_DCMotor motord(2);  //Right motor - connected to terminal 2
 const int NORMAL_SPEED = 80;
 const int HIGHER_SPEED = 120;
 const int LOWER_SPEED = 40;
+const float SPEED_INCREMENT = 0.2;
 
 // Reflectance Sensors TCRT5000
 // Sensor arrays
@@ -187,19 +188,16 @@ void front() {
   // The robot moves forward while the middle sensors detect the line, and side sensors detect no line.
   while (!((IRvalue[3]) && (IRvalue[1] || IRvalue[5]))) {
     Serial.print("while (FORWARD)");
-    Serial.println(!((IRvalue[3]) && (IRvalue[1] || IRvalue[5])));
     motori.run(FORWARD);
     motord.run(FORWARD);
     lineValue(pinIRd, IRvalue, SensorCountTotal);
     delay(100);
 
     // Correct to the right if necessary => [000001] turn slowly to the right until [000100]
-    // Proposed Condition: IRvalue[4] || IRvalue[5]
     if ((!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])) {
       gbontrackR();  // correct to the right
     }
     // Correct to the left if necessary => [010000] turn slowly to the left until [000100]
-    // Proposed Condition: (IRvalue[0] || IRvalue[1])
     else if ((IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) || (IRvalue[0] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5])) {
       gbontrackL();  //correct to the left
     }
@@ -302,28 +300,22 @@ void gbontrackR() {  //while is not [001100] do this
   motori.setSpeed(HIGHER_SPEED);
   motord.setSpeed(LOWER_SPEED);
 
-  // Proposed Condition: (!IRvalue[2] || !IRvalue[3])
   while (!IRvalue[3] || !IRvalue[2]) {
     Serial.print("HighSpeed: ");
-    Serial.println(higherSpeed);
-    Serial.print("LowSpeed: ");
+    Serial.print(higherSpeed);
+    Serial.print(" | LowSpeed: ");
     Serial.println(lowerSpeed);
+
     motori.setSpeed(higherSpeed);
     motord.setSpeed(lowerSpeed);
     motori.run(FORWARD);
     motord.run(FORWARD);
+    
     delay(10);
     lineValue(pinIRd, IRvalue, SensorCountTotal);
 
-    // TODO: Check if the line is lost
-    // if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
-    //   Serial.println("Line lost during right correction");
-    //   back();
-    //   break;
-    // }
-
-    higherSpeed +=0.2;
-    lowerSpeed -=0.2;
+    higherSpeed += SPEED_INCREMENT;
+    lowerSpeed -= SPEED_INCREMENT;
   }
 
   // Reset motor speeds
@@ -344,22 +336,17 @@ void gbontrackL() {  //while is not [001100] do this
   // Proposed Condition: (!IRvalue[2] || !IRvalue[3]) 
   while (!IRvalue[3] || !IRvalue[2]) {
     Serial.print("HighSpeed: ");
-    Serial.println(higherSpeed);
-    Serial.print("LowSpeed: ");
+    Serial.print(higherSpeed);
+    Serial.print(" | LowSpeed: ");
     Serial.println(lowerSpeed);
+
     motori.setSpeed(lowerSpeed);
     motord.setSpeed(higherSpeed);
     motori.run(FORWARD);
     motord.run(FORWARD);
+
     delay(10);
     lineValue(pinIRd, IRvalue, SensorCountTotal);
-
-    // TODO: Check if the line is lost
-    // if (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {
-    //   Serial.println("Line lost during left correction");
-    //   back();
-    //   break;
-    // }
 
     higherSpeed +=0.2;
     lowerSpeed -=0.2;
