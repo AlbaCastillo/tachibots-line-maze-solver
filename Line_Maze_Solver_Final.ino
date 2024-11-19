@@ -25,10 +25,20 @@ const uint8_t SensorCountTotal = SensorCountSetup + SensorCountPost;  // Total s
 // -D9(1)-     -D9(3)-    -D12(5)-
 // D3(1), D4(2), D5(3), D7(5), For turn control
 // D2(0) and D6(4) For goal control
+
+
+// Sensor arrays digital pins
 const int pinIRdSetup[SensorCountSetup] = {10, 9};            // Pins configured in setup
 const int pinIRdPost[SensorCountPost] = {6, 0, 2, 2};      // Pins configured post-start
 // const int pinIRdPost[SensorCountPost] = {6, 0, 2, 12};      // Pins configured post-start
+
+// TODO: Sensor arrays analog pins
+// const int pinIRdSetup[SensorCountSetup] = {A0, A1};       // Pins configured in setup
+// const int pinIRdPost[SensorCountPost] = {A2, A3, A4, A5}; // Pins configured post-start
+
 int pinIRd[SensorCountTotal];                                // Pines para los sensores infrarrojos
+const int THRESHOLD = 500; // For a single threshold
+// const int thresholds[SensorCountTotal] = {500, 500, 500, 505, 495, 500}; // For individual thresholds per sensor:
 
 int IRvalueSetup[SensorCountSetup] = {0, 0};            // Sensor values for setup
 int IRvaluePost[SensorCountPost] = {0, 0, 0, 0};        // Sensor values for post-start
@@ -133,7 +143,7 @@ void loop() {
     else if ((IRvalue[1] && IRvalue[3]) || (IRvalue[0] && IRvalue[2])) {
       Serial.println("Turn LEFT");
       path += 'L';
-      turn(90);
+      turn('L');
     }
 
     //Right Turn Condition [000101] ("R")
@@ -141,14 +151,14 @@ void loop() {
     else if ((IRvalue[5] && IRvalue[3]) || (IRvalue[4] && IRvalue[2])) {
       Serial.println("Turn RIGHT");
       path += 'R';
-      turn(-90);
+      turn('R');
     }
 
     //U Turn Condition [000100] ("U")
     else if (!IRvalue[3] && (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[4] && !IRvalue[5])) {
       Serial.println("U-TURN");
       path += 'U';
-      turn(180);
+      turn('U');
     }
 
     //Stop Condition [111111] Final of the maze
@@ -213,33 +223,98 @@ void front() {
 }
 
 
-void turn(float targetAngle) {
+void turn(char direction) {
+  // Stop the motors before turning
   motori.run(RELEASE);
   motord.run(RELEASE);
   delay(10);
-  angle = 0;            // Reset the accumulated angle
-  lastTime = millis();  // Reset the time
 
-  // Determine motor directions based on targetAngle
-  int motorLeftDirection = (targetAngle > 0) ? BACKWARD : FORWARD;
-  int motorRightDirection = (targetAngle > 0) ? FORWARD : BACKWARD;
+  Serial.print("Turning ");
+  Serial.println(direction);
 
-  while (abs(angle) < abs(targetAngle)) {  // Turn until the target angle is reached
-    motori.run(motorLeftDirection);
-    motord.run(motorRightDirection);
-    delay(5);
-    // Serial.println(angle);
+  // Variables for motor speeds
+  float leftSpeed = NORMAL_SPEED;
+  float rightSpeed = NORMAL_SPEED;
 
-    updateGyro();
+  // Determine initial motor directions
+  int leftDirection = FORWARD;
+  int rightDirection = FORWARD;
+
+  // Adjust motor directions based on the turn direction
+  if (direction == 'L') { // Left turn
+    // Both motors move forward
+    leftDirection = FORWARD;
+    rightDirection = FORWARD;
+    leftSpeed = LOWER_SPEED;
+    rightSpeed = HIGHER_SPEED;
+  } else if (direction == 'R') { // Right turn
+    // Both motors move forward
+    leftDirection = FORWARD;
+    rightDirection = FORWARD;
+    leftSpeed = HIGHER_SPEED;
+    rightSpeed = LOWER_SPEED;
+  } else if (direction == 'U') { // U-turn
+    // Left motor backward, right motor forward
+    leftDirection = BACKWARD;
+    rightDirection = FORWARD;
+  } else {
+    Serial.println("Invalid direction!");
+    return;
   }
-  delay(100);
 
-  motori.run(FORWARD);
-  motord.run(FORWARD);
+  // Gradually adjust speeds during the turn
+  while (!IRvalue[3] || !IRvalue[2]) {
+    // Read sensor values
+    lineValue(pinIRd, IRvalue, SensorCountTotal);
+
+    // Exit condition: line detected by the center-front sensor
+    if (IRvalue[2] == 1) {
+      break;
+    }
+
+    // Adjust speeds incrementally
+    if (direction == 'L') {
+      // Turn left by decreasing left motor speed, increasing right motor speed
+      leftSpeed -= SPEED_INCREMENT; // Decrease left speed
+      rightSpeed += SPEED_INCREMENT; // Increase right speed
+    } else if (direction == 'R') {
+      // Turn right by increasing left motor speed, decreasing right motor speed
+      leftSpeed += SPEED_INCREMENT; // Increase left speed
+      rightSpeed -= SPEED_INCREMENT; // Decrease right speed
+    } else if (direction == 'U') {
+      // For U-turns, both motors run at higher speeds, opposite directions
+      leftSpeed += SPEED_INCREMENT;
+      rightSpeed += SPEED_INCREMENT;
+    }
+
+    // Apply motor speeds and directions using the new function
+    setMotorSpeeds(leftDirection, rightDirection, leftSpeed, rightSpeed);
+
+    // Debugging: Print current speeds
+    Serial.print("Left Speed: ");
+    Serial.print(leftSpeed);
+    Serial.print(" | Right Speed: ");
+    Serial.println(rightSpeed);
+
+    delay(10); // Stability delay
+  }
+
+  // Stop the motors after completing the turn
+  motori.run(RELEASE);
+  motord.run(RELEASE);
   delay(10);
 
-  // Stop the motors
-  stop();
+  // Reset motor speeds to normal
+  motori.setSpeed(NORMAL_SPEED);
+  motord.setSpeed(NORMAL_SPEED);
+}
+
+// Function to set motor speeds and directions
+void setMotorSpeeds(int leftDirection, int rightDirection, float leftSpeed, float rightSpeed) {
+  motori.setSpeed(leftSpeed);
+  motord.setSpeed(rightSpeed);
+  motori.run(leftDirection);
+  motord.run(rightDirection);
 }
 
 
@@ -363,20 +438,43 @@ void go(String path) {  // Follow the recorded path
   for (int i = 0; i < path.length(); i++) {
     char step = path[i];
     if (step == 'S') front();
-    else if (step == 'L') turn(90);
-    else if (step == 'R') turn(-90);
-    else if (step == 'U') turn(180);
+    else if (step == 'L') turn('L');
+    else if (step == 'R') turn('R');
+    else if (step == 'U') turn('U');
   }
   stop();
 }
 
 
+// Digital Version
 void lineValue(const int *pins, int *values, uint8_t count) {
   for (int i = 0; i < count; i++) {
     values[i] = digitalRead(pins[i]);
   }
   delay(10);
 }
+
+
+// TODO: Analog Version
+/*
+void lineValue(const int *pins, int *values, uint8_t count) {
+  for (int i = 0; i < count; i++) {
+    int sensorValue = analogRead(pins[i]);
+    if (sensorValue < THRESHOLD) {
+      values[i] = 1; // Black line detected
+    } else {
+      values[i] = 0; // White surface detected
+    }
+    // Using individual thresholds:
+    // if (sensorValue < thresholds[i]) {
+    //   values[i] = 1; // Black line detected
+    // } else {
+    //   values[i] = 0; // White surface detected
+    // }
+  }
+  delay(10);
+}
+*/
 
 
 // Function to print sensor debug messages
