@@ -14,7 +14,7 @@ const int baseSpeed = 70;  // Base speed for motors
 const int MAX_SPEED = 120; // Maximum speed
 
 // PD Control Constants
-float Kp = 10.0;  // Start with a lower value
+float Kp = 8.0;  // Start with a lower value
 float Kd = 2.0;   // Adjust based on testing
 float Ki = 0.2;
 
@@ -45,6 +45,7 @@ float correction;
 float motorLSpeed;
 float motorRSpeed;
 bool allSensorsHigh = true;
+int activeSensors = 0;
 
 // Variable to keep track of the last extreme sensor
 int lastExtremeSensor = 0; // -1 for left, 1 for right, 0 if none
@@ -117,13 +118,14 @@ void calculateCorrection() {
   error = calculateError();
   derivative = error - errorLast;
   errorSquared = error * error * (error < 0 ? -1 : 1); // Preserve the sign
+  errorSquared = error; // Preserve the sign
 
   // Update error sum for integral term
   errorSum += error;
   errorSum = constrain(errorSum, -MAX_INTEGRAL, MAX_INTEGRAL);
 
   // Limit correction
-  int maxCorrection = baseSpeed; // Adjust as necessary
+  int maxCorrection = MAX_SPEED; // Adjust as necessary
 
   // Calculate correction
   // correction = (Kp * error) + (Kd * derivative) + (Ki * errorSum);
@@ -135,12 +137,12 @@ void calculateCorrection() {
 // Function to calculate error based on sensor readings
 int calculateError() {
   // int sensorWeights[6] = {-16, -8, 0, 0, 8, 16}; // Adjusted weights for symmetry
-  int sensorWeights[6] = {-6, -3, 0, 0, 3, 6}; // Adjusted weights for symmetry
+  int sensorWeights[6] = {-6, -3, 0, 0, 6, 3}; // Adjusted weights for symmetry
   int weightedSum = 0;
-  int activeSensors = 0;
+  activeSensors = 0;
 
   for (int i = 0; i < SensorCountTotal; i++) {
-    if (IRvalue[i] == LOW) { // Assuming LOW indicates line detected
+    if (IRvalue[i] == HIGH) { // Assuming LOW indicates line detected
       weightedSum += sensorWeights[i];
       activeSensors++;
     }
@@ -175,9 +177,9 @@ void setMotor(AF_DCMotor &motor, int speed) {
     motor.setSpeed(speed);
     motor.run(FORWARD);
   } else {
-    Serial.println("Motor running BACKWARD");
-    motor.run(BRAKE);  // Actively brake the motor
-    delay(50);         // Allow time to fully stop
+    Serial.print("Motor running BACKWARD ");
+    // motor.run(BRAKE);  // Actively brake the motor
+    delay(500);         // Allow time to fully stop
     motor.setSpeed(-speed); // speed is negative
     motor.run(BACKWARD);
   }
@@ -187,9 +189,9 @@ void setMotor(AF_DCMotor &motor, int speed) {
 // Function to update last extreme sensor detection
 void updateLastExtremeSensor() {
   // Update last extreme sensor detection
-  if (IRvalue[0] == LOW) { // Front left sensor detects line
+  if (IRvalue[0] == HIGH) { // Front left sensor detects line
     lastExtremeSensor = -1;
-  } else if (IRvalue[4] == LOW) { // Front right sensor detects line
+  } else if (IRvalue[4] == HIGH) { // Front right sensor detects line
     lastExtremeSensor = 1;
   }
 }
@@ -204,21 +206,21 @@ void handleCorrection() {
     // Lost line, initiate recovery based on last extreme sensor
     if (lastExtremeSensor == 1) {
       // Last detected on right, turn right
-      Serial.println("Reversing RIGHT motor");
+      // Serial.println("Reversing RIGHT motor");
       motorRSpeed = -baseSpeed;  // Reverse right motor
     } else {
       // Last detected on left, turn left or no extreme sensor detected before losing line, default recovery
-      Serial.println("Reversing LEFT motor");
+      // Serial.println("Reversing LEFT motor");
       motorLSpeed = -baseSpeed; // Reverse left motor
     }
   } else {
     // Regular PD control
     if (correction >= 0) {
       // Turn left: slow down left motor
-      motorLSpeed = baseSpeed - correction;
+      motorLSpeed = baseSpeed + correction;
     } else if (correction < 0) {
       // Turn right: slow down right motor
-      motorRSpeed = baseSpeed + correction; // correction is negative
+      motorRSpeed = baseSpeed - correction; // correction is negative
     }
   }
 }
@@ -341,6 +343,7 @@ void debugOutput() {
   Serial.print(" | Last Extreme: "); Serial.print(lastExtremeSensor);
   Serial.print(" | ErrorSquared: "); Serial.print(Kp * errorSquared);
   Serial.print(" | Derivative: "); Serial.print(Kd * derivative);
+  Serial.print(" | activeSensors: "); Serial.print(activeSensors);
   Serial.print(" | Error: "); Serial.print(error);
   Serial.print(" | Correction: "); Serial.print(correction);
   Serial.print(" | Left Speed: "); Serial.print(motorLSpeed);
