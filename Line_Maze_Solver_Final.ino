@@ -42,11 +42,12 @@ bool postSensorsInitialized = false;  // Tracks whether post sensors are initial
 
 const int MAX_INTEGRAL = 1000;
 float correction;
-float motorLSpeed;
-float motorRSpeed;
+int motorLSpeed;
+int motorRSpeed;
 bool allSensorsHigh = true;
 int pattern;
 char interseccion = "";
+bool uTurnInProgress = false;
 
 // Variable to keep track of the last extreme sensor
 int lastExtremeSensor = 0; // -1 for left, 1 for right, 0 if none
@@ -96,13 +97,13 @@ void loop() {
 
     // // Read sensor values
     lineValue(pinIRd, IRvalue, SensorCountTotal);
+
     updateLastExtremeSensor();
     detectExtremeDeviations();
     calculateCorrection();
     handleCorrection();
 
     // // Set motor speeds
-    delay(500);
     setMotor(motori, motorLSpeed);
     setMotor(motord, motorRSpeed);
     debugOutput();
@@ -117,7 +118,7 @@ void calculateCorrection() {
   // PD control
   errorLast = error;
   error = calculateError();
-  derivative = (error - errorLast) + (allSensorsHigh * error * error * (error < 0 ? -1 : 1));
+  derivative = (error - errorLast)  + (allSensorsHigh * error * error * (error < 0 ? -1 : 1));
   // errorSquared = error * error * (error < 0 ? -1 : 1); // Preserve the sign
   errorSquared = error; // Preserve the sign
 
@@ -196,7 +197,7 @@ int calculateError() {
     case 0b100000:
     case 0b101100:
     case 0b011100:
-      error = -6; // Sharp turn left
+      error = -12; // Sharp turn left
       interseccion = 'L';
       break;
 
@@ -218,7 +219,7 @@ int calculateError() {
     case 0b000011:
     case 0b001110:
     case 0b000001:
-      error = 6; // Sharp turn right
+      error = 12; // Sharp turn right
       interseccion = 'L';
       break;
 
@@ -258,21 +259,27 @@ void detectExtremeDeviations() {
   for (int i = 0; i < SensorCountTotal; i++) {
     if (IRvalue[i] == HIGH) {
       allSensorsHigh = false; // Line detected by at least one sensor
+
+      if(uTurnInProgress && !allSensorsHigh) {
+        stop();
+      }
+      uTurnInProgress = false;
     }
   }
 }
 
 
 void setMotor(AF_DCMotor &motor, int speed) {
+  // motor.setSpeed(0); 
   if (speed >= 0) {
     motor.setSpeed(speed);
     motor.run(FORWARD);
   } else {
     Serial.println("Motor running BACKWARD");
-    motor.run(RELEASE);  // Actively release the motor
-    delay(5);         // Allow time to fully stop
-    motor.setSpeed(-speed); // speed is negative
-    motor.run(BACKWARD);
+    motor.setSpeed(0); // speed is negative
+    // motor.run(BACKWARD);
+    // motor.setSpeed(-speed); // speed is negative
+    delay(10);         // Allow time to fully stop
   }
   delay(10);
 }
@@ -280,10 +287,10 @@ void setMotor(AF_DCMotor &motor, int speed) {
 // Function to update last extreme sensor detection
 void updateLastExtremeSensor() {
   // Update last extreme sensor detection
-  if (IRvalue[0] == 1) { // Front left sensor detects line
+  if (IRvalue[0] == 1 || IRvalue[1] == 1) { // Front left sensor detects line
     Serial.println("Front left sensor detects line.");
     lastExtremeSensor = -1;
-  } else if (IRvalue[4] == 1) { // Front right sensor detects line
+  } else if (IRvalue[4] == 1 || IRvalue[5] == 1) { // Front right sensor detects line
     Serial.println("Front right sensor detects line");
     lastExtremeSensor = 1;
   }
@@ -296,25 +303,30 @@ void handleCorrection() {
   motorRSpeed = baseSpeed;
 
   if (allSensorsHigh) {
+    if(!uTurnInProgress) {
+      uTurnInProgress = true;
+      stop();
+    }
     // Lost line, initiate recovery based on last extreme sensor
     if (lastExtremeSensor == 1) {
       // Last detected on right, turn right
       // Serial.println("Reversing RIGHT motor");
-      motorRSpeed = -baseSpeed;  // Reverse right motor
+      motorLSpeed = -MAX_SPEED; // Reverse left motor
     } else {
       // Last detected on left, turn left or no extreme sensor detected before losing line, default recovery
       // Serial.println("Reversing LEFT motor");
-      motorLSpeed = -baseSpeed; // Reverse left motor
+      motorRSpeed = -MAX_SPEED;  // Reverse right motor
     }
   } else {
     // Regular PD control
     if (correction >= 0) {
       // Turn left: slow down left motor
-      motorLSpeed = baseSpeed + correction;
-      // motorRSpeed = baseSpeed + correction;
+      // motorLSpeed = baseSpeed + correction;
+      motorRSpeed = baseSpeed - correction;
     } else if (correction < 0) {
       // Turn right: slow down right motor
-      motorRSpeed = baseSpeed - correction; // correction is negative
+      // motorRSpeed = baseSpeed - correction; // correction is negative
+      motorLSpeed = baseSpeed + correction;
     }
   }
 }
@@ -424,9 +436,13 @@ void handleForks() {
 
 // Function to stop the robot
 void stop() {
-  motori.run(RELEASE);
-  motord.run(RELEASE);
-  delay(50);
+  Serial.println("Stop");
+  motori.setSpeed(0);
+  motord.setSpeed(0);
+  // motord.run(RELEASE);
+  // motori.run(RELEASE);
+  delay(1000);
+  Serial.println("Finish Stop");
 }
 
 
