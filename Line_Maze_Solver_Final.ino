@@ -170,26 +170,11 @@ int calculateError() {
       interseccion = 'O';
       break;
 
-    // Straight line cases
-    case 0b001100:
-    case 0b000100:
-    case 0b001000:
-      error = 0; // Centered on the line
-      interseccion = '|';
-      break;
-
     // Slight left
     case 0b011000:
     case 0b010000:
       error = -3; // Adjust to the left
       interseccion = '|';
-      break;
-
-    // Slight right
-    case 0b000110:
-    case 0b000010:
-      error = 3; // Adjust to the right
-      interseccion = '/';
       break;
 
     // Sharp left
@@ -213,6 +198,14 @@ int calculateError() {
     case 0b110101: case 0b011101: case 0b010111:
       error = -12; // Turn left at intersection
       interseccion = '+';
+      break;
+
+    // Straight line cases
+    case 0b001100:
+    case 0b000100:
+    case 0b001000:
+      error = 0; // Centered on the line
+      interseccion = '|';
       break;
 
     // Sharp right
@@ -271,7 +264,7 @@ void detectExtremeDeviations() {
 
 void setMotor(AF_DCMotor &motor, int speed) {
   // motor.setSpeed(0); 
-  if (speed >= 0) {
+  if (speed > 0) {
     motor.setSpeed(speed);
     motor.run(FORWARD);
   } else {
@@ -311,11 +304,21 @@ void handleCorrection() {
     if (lastExtremeSensor == 1) {
       // Last detected on right, turn right
       // Serial.println("Reversing RIGHT motor");
-      motorLSpeed = -MAX_SPEED; // Reverse left motor
+      
+      motorLSpeed = MAX_SPEED; // Reverse left motor
+      motorRSpeed = 0;  // Reverse right motor
+
+      // motorRSpeed = MAX_SPEED;  // Reverse right motor
+      // motorLSpeed = 0;
     } else {
       // Last detected on left, turn left or no extreme sensor detected before losing line, default recovery
       // Serial.println("Reversing LEFT motor");
-      motorRSpeed = -MAX_SPEED;  // Reverse right motor
+
+      motorRSpeed = MAX_SPEED;  // Reverse right motor
+      motorLSpeed = 0;
+
+      // motorLSpeed = MAX_SPEED; // Reverse left motor
+      // motorRSpeed = 0;  // Reverse right motor
     }
   } else {
     // Regular PD control
