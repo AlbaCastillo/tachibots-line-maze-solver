@@ -16,11 +16,14 @@ const int MAX_SPEED = 255; // Maximum speed
 // PD Control Constants
 float Kp = 10.0;  // Start with a lower value
 float Kd = 2.0;   // Adjust based on testing
+float Ki = 0.2;
 
 // Error variables
 int error = 0;
 int errorLast = 0;
-int correction = 0;
+int derivative = 0;
+int errorSquared;
+int errorSum = 0; // For Integral term
 
 // Sensor arrays
 const uint8_t SensorCountSetup = 2;  // Sensors initialized in setup
@@ -37,6 +40,14 @@ int IRvalue[SensorCountTotal]; // Sensor readings
 bool calibrated = false;           // Tracks whether calibration is complete
 bool postSensorsInitialized = false;  // Tracks whether post sensors are initialized
 
+const int MAX_INTEGRAL = 1000;
+float correction;
+float motorLSpeed;
+float motorRSpeed;
+
+// Variable to keep track of the last extreme sensor
+int lastExtremeSensor = 0; // -1 for left, 1 for right, 0 if none
+
 // Function prototypes
 void setup();
 void loop();
@@ -45,8 +56,9 @@ void debugInfraRed(const int *values, uint8_t count, const char *label);
 void performCalibration();
 void initializePostSensors();
 int calculateError();
-void handleForks();
+void setMotor(AF_DCMotor &motor, int speed);
 void stop();
+
 
 // Setup function (unchanged)
 void setup() {
@@ -81,47 +93,81 @@ void loop() {
     // Read sensor values
     lineValue(pinIRd, IRvalue, SensorCountTotal);
 
+    // Update last extreme sensor detection
+    if (IRvalue[0] == LOW) { // Front left sensor detects line
+      lastExtremeSensor = -1;
+    } else if (IRvalue[4] == LOW) { // Front right sensor detects line
+      lastExtremeSensor = 1;
+    }
+
     // PD control
     errorLast = error;
     error = calculateError();
-    int derivative = error - errorLast;
-    correction = (Kp * error) + (Kd * derivative);
+    derivative = error - errorLast;
+    errorSquared = error * error * (error < 0 ? -1 : 1); // Preserve the sign
+
+    // Update error sum for integral term
+    errorSum += error;
+    errorSum = constrain(errorSum, -MAX_INTEGRAL, MAX_INTEGRAL);
 
     // Limit correction
     int maxCorrection = baseSpeed; // Adjust as necessary
+
+    // correction = (Kp * error) + (Kd * derivative) + (Ki * errorSum);
+    correction = (Kp * errorSquared) + (Kd * derivative);
     correction = constrain(correction, -maxCorrection, maxCorrection);
 
-    // Adjust motor speeds based on correction
-    float motorLSpeed = baseSpeed;
-    float motorRSpeed = baseSpeed;
+    // Detect extreme deviations
+    bool allSensorsHigh = true;
+    for (int i = 0; i < SensorCountTotal; i++) {
+      if (IRvalue[i] == HIGH) {
+        allSensorsHigh = false;
+        break;
+      }
+    }
 
-    if (correction >= 0) {
-      // Turn left: slow down left motor
-      motorLSpeed = baseSpeed - correction;
-      motorRSpeed = constrain(motorRSpeed, 0, MAX_SPEED);
-    } else if (correction < 0) {
-      // Turn right: slow down right motor
-      motorRSpeed = baseSpeed + correction; // correction is negative
-      motorRSpeed = constrain(motorRSpeed, 0, MAX_SPEED);
+    motorLSpeed = baseSpeed;
+    motorRSpeed = baseSpeed;
+
+     // Handle extreme cases
+    if (allSensorsHigh) {
+      // Lost line, initiate recovery based on last extreme sensor
+      if (lastExtremeSensor == 1) {
+        // Last detected on right, turn right
+        motord.run(RELEASE);
+        motorRSpeed = -baseSpeed;  // Reverse right motor
+      } else {
+        // Last detected on left, turn left or no extreme sensor detected before losing line, default recovery
+        motori.run(RELEASE);
+        motorLSpeed = -baseSpeed; // Reverse left motor
+      }
+    } else {
+      // Regular PD control
+      if (correction >= 0) {
+        // Turn left: slow down left motor
+        motorLSpeed = baseSpeed - correction;
+      } else if (correction < 0) {
+        // Turn right: slow down right motor
+        motorRSpeed = baseSpeed + correction; // correction is negative
+      }
+
     }
 
     // Set motor speeds
-    // motori.setSpeed(motorLSpeed);
-    // motord.setSpeed(motorRSpeed);
-    // motori.run(Back);
-    // motord.run(FORWARD);
+    setMotor(motori, motorLSpeed);
+    setMotor(motord, motorRSpeed);
     debugInfraRed(IRvalue, SensorCountTotal, "Sensor States"); // Uncomment for debugging
-    Serial.print(" | Error: ");
-    Serial.print(error);
-    Serial.print(" | Correction: ");
-    Serial.print(correction);
-    Serial.print(" | Left Speed: ");
-    Serial.print(motorLSpeed);
-    Serial.print(" | Right Speed: ");
-    Serial.println(motorRSpeed);
+    Serial.print(" | U Turn : "); Serial.print(allSensorsHigh);
+    Serial.print(" | Last Extreme: "); Serial.print(lastExtremeSensor);
+    Serial.print(" | ErrorSquared: "); Serial.print(Kp * errorSquared);
+    Serial.print(" | Derivative: "); Serial.print(Kd * derivative);
+    Serial.print(" | Error: "); Serial.print(error);
+    Serial.print(" | Correction: "); Serial.print(correction);
+    Serial.print(" | Left Speed: "); Serial.print(motorLSpeed);
+    Serial.print(" | Right Speed: "); Serial.println(motorRSpeed);
 
     // Small delay for stability
-    delay(5);
+    delay(50);
   }
 }
 
@@ -149,6 +195,17 @@ int calculateError() {
       return 6; // Max error to the right
     }
   }
+}
+
+void setMotor(AF_DCMotor &motor, int speed) {
+  if (speed >= 0) {
+    motor.setSpeed(speed);
+    motor.run(FORWARD);
+  } else {
+    motor.setSpeed(-speed); // speed is negative
+    motor.run(BACKWARD);
+  }
+  delay(10);
 }
 
 // Function to read sensor values
