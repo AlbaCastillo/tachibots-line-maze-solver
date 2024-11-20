@@ -35,10 +35,6 @@ const int pinIRdSetup[SensorCountSetup] = {10, 9};            // Pins configured
 const int pinIRdPost[SensorCountPost] = {6, 0, 2, 12};      // Pins configured post-start
 // const int pinIRdPost[SensorCountPost] = {6, 0, 2, 2};      // Pins configured post-start
 
-// TODO: Sensor arrays analog pins
-// const int pinIRdSetup[SensorCountSetup] = {A3, A2};       // Pins configured in setup
-// const int pinIRdPost[SensorCountPost] = {A5, A4, A1, A0}; // Pins configured post-start
-
 int pinIRd[SensorCountTotal];                                // Pines para los sensores infrarrojos
 const int THRESHOLD = 469; // For a single threshold
 // const int thresholds[SensorCountTotal] = {500, 500, 500, 505, 495, 500}; // For individual thresholds per sensor:
@@ -90,12 +86,6 @@ void setup() {
   motord.run(RELEASE);
   delay(100);
 
-  // MPU Configuration
-  // if (!mpu.begin()) {
-  //   Serial.println("Failed to find MPU6050");
-  // }
-  // mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-
   lastTime = millis();
 
   // Configure pins for setup sensors
@@ -122,20 +112,15 @@ void loop() {
     debugInfraRed(IRvalue, SensorCountTotal, "All Sensor States");
     delay(500);
 
-    /* Get new sensor events with the readings */
-    // sensors_event_t a, g, temp;
-    // mpu.getEvent(&a, &g, &temp);
-
-    //
-    if (goal == 1) {
-      if (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {  // Positioned at the start line
-        go(shortestPath);                                                                          //
-      }
-      stop();
-    }
+    // if (goal == 1) {
+    //   if (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3] && !IRvalue[4] && !IRvalue[5]) {  // Positioned at the start line
+    //     go(shortestPath);                                                                          //
+    //   }
+    //   stop();
+    // }
 
     //FORWARD Condition [001100] (Go straight "S")
-    if (!IRvalue[0] && !IRvalue[1] && IRvalue[2]) {
+    if (IRvalue[2] && IRvalue[3]) {
     // if ((!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3]) || (!IRvalue[0] && !IRvalue[1] && IRvalue[2] && IRvalue[3])) {
       Serial.println("Move FORWARD");
       path += 'S';
@@ -205,7 +190,10 @@ void front() {
     delay(100);
 
     // Correct to the right if necessary => [000001] turn slowly to the right until [000100]
-    if ((!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])) {
+    if (
+      (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[5]) || 
+      (!IRvalue[0] && !IRvalue[1] && !IRvalue[2] && !IRvalue[3] && IRvalue[4])
+    ) {
       gbontrackR();  // correct to the right
     }
     // Correct to the left if necessary => [010000] turn slowly to the left until [000100]
@@ -224,7 +212,8 @@ void front() {
 
 void turn(char direction) {
   // Stop the motors before turning
-  delay(10);
+  Serial.print("Turning ");
+  delay(1040);
 
   Serial.print("Turning ");
   Serial.println(direction);
@@ -245,14 +234,14 @@ void turn(char direction) {
     rightDirection = FORWARD;
     leftSpeed = NORMAL_SPEED;
     rightSpeed = NORMAL_SPEED;
-    outCondition = (!IRvalue[3] && !IRvalue[2]) || (!IRvalue[4]);
+    outCondition = (!IRvalue[3] && !IRvalue[2]);
   } else if (direction == 'R') { // Right turn
     // Both motors move forward
     leftDirection = FORWARD;
     rightDirection = BACKWARD;
     leftSpeed = NORMAL_SPEED;
     rightSpeed = NORMAL_SPEED;
-    outCondition = (!IRvalue[3] && !IRvalue[2]) || (!IRvalue[0]);
+    outCondition = (!IRvalue[3] && !IRvalue[2]);
   } else if (direction == 'U') { // U-turn
     // Left motor backward, right motor forward
     leftDirection = BACKWARD;
@@ -450,29 +439,6 @@ void lineValue(const int *pins, int *values, uint8_t count) {
   }
   delay(10);
 }
-
-
-// TODO: Analog Version
-/*
-void lineValue(const int *pins, int *values, uint8_t count) {
-  for (int i = 0; i < count; i++) {
-    int sensorValue = analogRead(pins[i]);
-    if (sensorValue > THRESHOLD) {
-      values[i] = 1; // Black line detected
-    } else {
-      values[i] = 0; // White surface detected
-    }
-    // Using individual thresholds:
-    // if (sensorValue < thresholds[i]) {
-    //   values[i] = 1; // Black line detected
-    // } else {
-    //   values[i] = 0; // White surface detected
-    // }
-  }
-  delay(10);
-}
-*/
-
 
 
 // Function to print sensor debug messages
