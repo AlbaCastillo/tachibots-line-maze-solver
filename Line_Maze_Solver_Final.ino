@@ -45,10 +45,12 @@ float correction;
 float motorLSpeed;
 float motorRSpeed;
 bool allSensorsHigh = true;
-int activeSensors = 0;
+int pattern;
+char interseccion = "";
 
 // Variable to keep track of the last extreme sensor
 int lastExtremeSensor = 0; // -1 for left, 1 for right, 0 if none
+int activeSensors;
 
 // Function prototypes
 void setup();
@@ -92,21 +94,20 @@ void loop() {
       initializePostSensors();
     }
 
-    // Read sensor values
+    // // Read sensor values
     lineValue(pinIRd, IRvalue, SensorCountTotal);
     updateLastExtremeSensor();
-    calculateCorrection();
     detectExtremeDeviations();
+    calculateCorrection();
     handleCorrection();
 
-    // Set motor speeds
-    delay(50);
+    // // Set motor speeds
+    delay(500);
     setMotor(motori, motorLSpeed);
     setMotor(motord, motorRSpeed);
-
     debugOutput();
 
-    // Small delay for stability
+    // Small delay  for stability
     delay(50);
   }
 }
@@ -116,8 +117,8 @@ void calculateCorrection() {
   // PD control
   errorLast = error;
   error = calculateError();
-  derivative = error - errorLast;
-  errorSquared = error * error * (error < 0 ? -1 : 1); // Preserve the sign
+  derivative = (error - errorLast) + (allSensorsHigh * error * error * (error < 0 ? -1 : 1));
+  // errorSquared = error * error * (error < 0 ? -1 : 1); // Preserve the sign
   errorSquared = error; // Preserve the sign
 
   // Update error sum for integral term
@@ -134,15 +135,109 @@ void calculateCorrection() {
 }
 
 
-// Function to calculate error based on sensor readings
+// Function to get the binary pattern of sensor readings
+int getSensorPattern() {
+  int pattern = 0;
+  for (int i = 0; i < SensorCountTotal; i++) {
+    if (IRvalue[i] == HIGH) {
+      pattern |= (1 << (SensorCountTotal - 1 - i));
+    }
+  }
+  return pattern;
+}
+
+void printBinary(int number, int bitCount) {
+  Serial.print("B");
+  for (int i = bitCount - 1; i >= 0; i--) {
+    Serial.print((number >> i) & 1);
+  }
+}
+
 int calculateError() {
-  // int sensorWeights[6] = {-16, -8, 0, 0, 8, 16}; // Adjusted weights for symmetry
-  int sensorWeights[6] = {-6, -3, 0, 0, 6, 3}; // Adjusted weights for symmetry
+  pattern = getSensorPattern();
+  errorLast = error;
+  interseccion = "";
+
+  switch (pattern) {
+    // No line detected
+    case 0b000000:
+      if (errorLast < 0) {
+        error = -6; // Continue turning left
+      } else {
+        error = 6; // Continue turning right
+      }
+      interseccion = 'O';
+      break;
+
+    // Straight line cases
+    case 0b001100:
+    case 0b000100:
+    case 0b001000:
+      error = 0; // Centered on the line
+      interseccion = '|';
+      break;
+
+    // Slight left
+    case 0b011000:
+    case 0b010000:
+      error = -3; // Adjust to the left
+      interseccion = '|';
+      break;
+
+    // Slight right
+    case 0b000110:
+    case 0b000010:
+      error = 3; // Adjust to the right
+      interseccion = '/';
+      break;
+
+    // Sharp left
+    case 0b110000:
+    case 0b100000:
+    case 0b101100:
+    case 0b011100:
+      error = -6; // Sharp turn left
+      interseccion = 'L';
+      break;
+
+    // T-Junctions
+    case 0b101010: case 0b010101: case 0b111010:
+    case 0b101110: case 0b101011: 
+      // Decide based on priority (e.g., always turn left)
+      error = -12; // Turn left at intersection
+      interseccion = 'T';
+      break;
+
+    // Crossroads 
+    case 0b110101: case 0b011101: case 0b010111:
+      error = -12; // Turn left at intersection
+      interseccion = '+';
+      break;
+
+    // Sharp right
+    case 0b000011:
+    case 0b001110:
+    case 0b000001:
+      error = 6; // Sharp turn right
+      interseccion = 'L';
+      break;
+
+    // Default case: Use weighted average
+    default:
+      error = weightedAverageError();
+      break;
+  }
+
+  return error;
+}
+
+int weightedAverageError() {
+  int sensorWeights[6] = {-6, -3, 0, 0, 3, 6}; // Left to right
   int weightedSum = 0;
   activeSensors = 0;
 
   for (int i = 0; i < SensorCountTotal; i++) {
-    if (IRvalue[i] == HIGH) { // Assuming LOW indicates line detected
+    if (IRvalue[i] == HIGH) {
       weightedSum += sensorWeights[i];
       activeSensors++;
     }
@@ -151,12 +246,8 @@ int calculateError() {
   if (activeSensors > 0) {
     return weightedSum / activeSensors;
   } else {
-    // No line detected, continue in last known direction
-    if (errorLast < 0) {
-      return -6; // Max error to the left
-    } else {
-      return 6; // Max error to the right
-    }
+    // No line detected, use last error
+    return errorLast;
   }
 }
 
@@ -177,9 +268,9 @@ void setMotor(AF_DCMotor &motor, int speed) {
     motor.setSpeed(speed);
     motor.run(FORWARD);
   } else {
-    Serial.print("Motor running BACKWARD ");
-    // motor.run(BRAKE);  // Actively brake the motor
-    delay(500);         // Allow time to fully stop
+    Serial.println("Motor running BACKWARD");
+    motor.run(RELEASE);  // Actively release the motor
+    delay(5);         // Allow time to fully stop
     motor.setSpeed(-speed); // speed is negative
     motor.run(BACKWARD);
   }
@@ -189,9 +280,11 @@ void setMotor(AF_DCMotor &motor, int speed) {
 // Function to update last extreme sensor detection
 void updateLastExtremeSensor() {
   // Update last extreme sensor detection
-  if (IRvalue[0] == HIGH) { // Front left sensor detects line
+  if (IRvalue[0] == 1) { // Front left sensor detects line
+    Serial.println("Front left sensor detects line.");
     lastExtremeSensor = -1;
-  } else if (IRvalue[4] == HIGH) { // Front right sensor detects line
+  } else if (IRvalue[4] == 1) { // Front right sensor detects line
+    Serial.println("Front right sensor detects line");
     lastExtremeSensor = 1;
   }
 }
@@ -218,6 +311,7 @@ void handleCorrection() {
     if (correction >= 0) {
       // Turn left: slow down left motor
       motorLSpeed = baseSpeed + correction;
+      // motorRSpeed = baseSpeed + correction;
     } else if (correction < 0) {
       // Turn right: slow down right motor
       motorRSpeed = baseSpeed - correction; // correction is negative
@@ -336,13 +430,16 @@ void stop() {
 }
 
 
+
 // Function to output debugging information
 void debugOutput() {
   debugInfraRed(IRvalue, SensorCountTotal, "Sensor States");
   Serial.print(" | U Turn : "); Serial.print(allSensorsHigh);
   Serial.print(" | Last Extreme: "); Serial.print(lastExtremeSensor);
-  Serial.print(" | ErrorSquared: "); Serial.print(Kp * errorSquared);
-  Serial.print(" | Derivative: "); Serial.print(Kd * derivative);
+  // Serial.print(" | ErrorSquared: "); Serial.print(Kp * errorSquared);
+  Serial.print(" | Sensor Pattern: "); printBinary(pattern, 6); // Print the 6-bit pattern
+  Serial.print(" | Cross: "); Serial.print(interseccion);
+  // Serial.print(" | Derivative: "); Serial.print(Kd * derivative);
   Serial.print(" | activeSensors: "); Serial.print(activeSensors);
   Serial.print(" | Error: "); Serial.print(error);
   Serial.print(" | Correction: "); Serial.print(correction);
