@@ -44,10 +44,14 @@ const int MAX_INTEGRAL = 1000;
 float correction;
 int motorLSpeed;
 int motorRSpeed;
+int lastTurningLSpeed;
+int lastTurningRSpeed;
 bool allSensorsHigh = true;
 int pattern;
 char interseccion = "";
 bool uTurnInProgress = false;
+bool leftTurnInProgress = false;
+bool rightTurnInProgress = false;
 
 // Variable to keep track of the last extreme sensor
 int lastExtremeSensor = 0; // -1 for left, 1 for right, 0 if none
@@ -98,6 +102,7 @@ void loop() {
     // // Read sensor values
     lineValue(pinIRd, IRvalue, SensorCountTotal);
 
+    updateTurnsProgress();
     updateLastExtremeSensor();
     detectExtremeDeviations();
     calculateCorrection();
@@ -110,6 +115,13 @@ void loop() {
 
     // Small delay  for stability
     delay(50);
+  }
+}
+
+void updateTurnsProgress() {
+  if(IRvalue[2] == 1 || IRvalue[3] == 1) {
+    leftTurnInProgress = false;
+    rightTurnInProgress = false;
   }
 }
 
@@ -162,10 +174,10 @@ int calculateError() {
   switch (pattern) {
     // No line detected
     case 0b000000:
-      if (errorLast < 0) {
-        error = -6; // Continue turning left
+      if (lastExtremeSensor == -1) {
+        error = -12; // Continue turning left
       } else {
-        error = 6; // Continue turning right
+        error = 12; // Continue turning right
       }
       interseccion = 'O';
       break;
@@ -182,8 +194,10 @@ int calculateError() {
     case 0b100000:
     case 0b101100:
     case 0b011100:
+    case 0b010110:
       error = -12; // Sharp turn left
       interseccion = 'L';
+      leftTurnInProgress = true;
       break;
 
     // T-Junctions
@@ -192,12 +206,15 @@ int calculateError() {
       // Decide based on priority (e.g., always turn left)
       error = -12; // Turn left at intersection
       interseccion = 'T';
+      leftTurnInProgress = true;
       break;
 
     // Crossroads 
-    case 0b110101: case 0b011101: case 0b010111:
+    // case 0b110101: 
+    case 0b011101: case 0b010111:
       error = -12; // Turn left at intersection
       interseccion = '+';
+      leftTurnInProgress = true;
       break;
 
     // Straight line cases
@@ -210,10 +227,10 @@ int calculateError() {
 
     // Sharp right
     case 0b000011:
-    case 0b001110:
     case 0b000001:
       error = 12; // Sharp turn right
-      interseccion = 'L';
+      interseccion = 'R';
+      rightTurnInProgress = true;
       break;
 
     // Default case: Use weighted average
@@ -281,10 +298,8 @@ void setMotor(AF_DCMotor &motor, int speed) {
 void updateLastExtremeSensor() {
   // Update last extreme sensor detection
   if (IRvalue[0] == 1 || IRvalue[1] == 1) { // Front left sensor detects line
-    Serial.println("Front left sensor detects line.");
     lastExtremeSensor = -1;
   } else if (IRvalue[4] == 1 || IRvalue[5] == 1) { // Front right sensor detects line
-    Serial.println("Front right sensor detects line");
     lastExtremeSensor = 1;
   }
 }
@@ -295,41 +310,39 @@ void handleCorrection() {
   motorLSpeed = baseSpeed;
   motorRSpeed = baseSpeed;
 
+  // Regular PD control
+  if (correction >= 0) {
+    // Turn left: slow down left motor
+    // motorLSpeed = baseSpeed + correction;
+    motorRSpeed = baseSpeed - correction;
+  } else if (correction < 0) {
+    // Turn right: slow down right motor
+    // motorRSpeed = baseSpeed - correction; // correction is negative
+    motorLSpeed = baseSpeed + correction;
+  }
+
+  lastTurningRSpeed = motorRSpeed;
+  lastTurningLSpeed = motorLSpeed;
+
+  // Lost line, initiate recovery based on last extreme sensor
   if (allSensorsHigh) {
     if(!uTurnInProgress) {
       uTurnInProgress = true;
       stop();
-    }
-    // Lost line, initiate recovery based on last extreme sensor
-    if (lastExtremeSensor == 1) {
+    }  
+    if (lastExtremeSensor == 1 && !leftTurnInProgress) {
       // Last detected on right, turn right
       // Serial.println("Reversing RIGHT motor");
-      
       motorLSpeed = MAX_SPEED; // Reverse left motor
       motorRSpeed = 0;  // Reverse right motor
-
-      // motorRSpeed = MAX_SPEED;  // Reverse right motor
-      // motorLSpeed = 0;
-    } else {
+    } else if (!rightTurnInProgress) {
       // Last detected on left, turn left or no extreme sensor detected before losing line, default recovery
       // Serial.println("Reversing LEFT motor");
-
       motorRSpeed = MAX_SPEED;  // Reverse right motor
       motorLSpeed = 0;
-
-      // motorLSpeed = MAX_SPEED; // Reverse left motor
-      // motorRSpeed = 0;  // Reverse right motor
-    }
-  } else {
-    // Regular PD control
-    if (correction >= 0) {
-      // Turn left: slow down left motor
-      // motorLSpeed = baseSpeed + correction;
-      motorRSpeed = baseSpeed - correction;
-    } else if (correction < 0) {
-      // Turn right: slow down right motor
-      // motorRSpeed = baseSpeed - correction; // correction is negative
-      motorLSpeed = baseSpeed + correction;
+    } else {
+      motorRSpeed = lastTurningRSpeed;
+      motorLSpeed = lastTurningLSpeed;
     }
   }
 }
@@ -452,14 +465,16 @@ void stop() {
 
 // Function to output debugging information
 void debugOutput() {
-  debugInfraRed(IRvalue, SensorCountTotal, "Sensor States");
+  // debugInfraRed(IRvalue, SensorCountTotal, "Sensor States");
+  Serial.print(" | Sensor Pattern: "); printBinary(pattern, 6); // Print the 6-bit pattern
   Serial.print(" | U Turn : "); Serial.print(allSensorsHigh);
   Serial.print(" | Last Extreme: "); Serial.print(lastExtremeSensor);
   // Serial.print(" | ErrorSquared: "); Serial.print(Kp * errorSquared);
-  Serial.print(" | Sensor Pattern: "); printBinary(pattern, 6); // Print the 6-bit pattern
-  Serial.print(" | Cross: "); Serial.print(interseccion);
+  Serial.print(" | Path: "); Serial.print(interseccion);
   // Serial.print(" | Derivative: "); Serial.print(Kd * derivative);
-  Serial.print(" | activeSensors: "); Serial.print(activeSensors);
+  // Serial.print(" | activeSensors: "); Serial.print(activeSensors);
+  Serial.print(" | rightTurnInProgress: "); Serial.print(rightTurnInProgress);
+  Serial.print(" | leftTurnInProgress: "); Serial.print(leftTurnInProgress);
   Serial.print(" | Error: "); Serial.print(error);
   Serial.print(" | Correction: "); Serial.print(correction);
   Serial.print(" | Left Speed: "); Serial.print(motorLSpeed);
