@@ -11,10 +11,10 @@ AF_DCMotor motord(2);  // Right motor - connected to terminal 2
 
 // Speed Constants
 const int baseSpeed = 70;  // Base speed for motors
-const int MAX_SPEED = 120; // Maximum speed
+const int MAX_SPEED = 90; // Maximum speed
 
 // PD Control Constants
-float Kp = 8.0;  // Start with a lower value
+float Kp = 15.0;  // Start with a lower value
 float Kd = 2.0;   // Adjust based on testing
 float Ki = 0.2;
 
@@ -56,6 +56,9 @@ bool rightTurnInProgress = false;
 // Variable to keep track of the last extreme sensor
 int lastExtremeSensor = 0; // -1 for left, 1 for right, 0 if none
 int activeSensors;
+
+unsigned long startTime = millis();
+const unsigned long maxWaitTime = 500; // Maximum time to wait (in milliseconds)
 
 // Function prototypes
 void setup();
@@ -111,6 +114,30 @@ void loop() {
     // // Set motor speeds
     setMotor(motori, motorLSpeed);
     setMotor(motord, motorRSpeed);
+
+    startTime = millis();
+
+    // Loop to replace fixed delay
+    if(leftTurnInProgress || rightTurnInProgress || uTurnInProgress) {
+      while (millis() - startTime < maxWaitTime) {
+        delay(50);
+        // Read sensor values
+        lineValue(pinIRd, IRvalue, SensorCountTotal);
+
+        // Check if center sensors detect the line
+        Serial.println("Waiting for central signal");
+        if (IRvalue[2] == 1 || IRvalue[3] == 1) {
+          // Line detected in center sensors; exit early
+          Serial.println("Central detected");
+          leftTurnInProgress = false;
+          rightTurnInProgress = false;
+          break;
+        }
+
+        // Add a short delay for stability
+        delay(5);
+      }
+    }
     debugOutput();
 
     // Small delay  for stability
@@ -167,6 +194,7 @@ void printBinary(int number, int bitCount) {
 }
 
 int calculateError() {
+  lineValue(pinIRd, IRvalue, SensorCountTotal);
   pattern = getSensorPattern();
   errorLast = error;
   interseccion = "";
@@ -225,12 +253,21 @@ int calculateError() {
       interseccion = '|';
       break;
 
-    // Sharp right
-    case 0b000011:
-    case 0b000001:
-      error = 12; // Sharp turn right
-      interseccion = 'R';
-      rightTurnInProgress = true;
+    // // Sharp right
+    // case 0b000010:
+    // case 0b000101:
+    //   error = 12; // Sharp turn right
+    //   interseccion = 'R';
+    //   rightTurnInProgress = true;
+    //   break;
+
+    case 0b111111:
+      finalStop();
+      finalStop();
+      finalStop();
+      finalStop();
+      finalStop();
+      finalStop();
       break;
 
     // Default case: Use weighted average
@@ -265,6 +302,7 @@ int weightedAverageError() {
 
 // Function to detect extreme deviations -> U turn neeeded
 void detectExtremeDeviations() {
+  lineValue(pinIRd, IRvalue, SensorCountTotal);
   allSensorsHigh = true; // No line detected by any sensor
   for (int i = 0; i < SensorCountTotal; i++) {
     if (IRvalue[i] == HIGH) {
@@ -285,11 +323,14 @@ void setMotor(AF_DCMotor &motor, int speed) {
     motor.setSpeed(speed);
     motor.run(FORWARD);
   } else {
-    Serial.println("Motor running BACKWARD");
     motor.setSpeed(0); // speed is negative
     // motor.run(BACKWARD);
     // motor.setSpeed(-speed); // speed is negative
     delay(10);         // Allow time to fully stop
+  }
+
+  if(leftTurnInProgress || rightTurnInProgress) {
+    delay(100);         // Allow time to fully advanced step
   }
   delay(10);
 }
@@ -328,7 +369,7 @@ void handleCorrection() {
   if (allSensorsHigh) {
     if(!uTurnInProgress) {
       uTurnInProgress = true;
-      stop();
+      // stop();
     }  
     if (lastExtremeSensor == 1 && !leftTurnInProgress) {
       // Last detected on right, turn right
@@ -457,9 +498,20 @@ void stop() {
   motord.setSpeed(0);
   // motord.run(RELEASE);
   // motori.run(RELEASE);
-  delay(1000);
+  delay(500);
   Serial.println("Finish Stop");
 }
+
+void finalStop() {
+  Serial.println("Stop");
+  motori.setSpeed(0);
+  motord.setSpeed(0);
+  // motord.run(RELEASE);
+  // motori.run(RELEASE);
+  delay(30000);
+  Serial.println("Finish Stop");
+}
+
 
 
 
