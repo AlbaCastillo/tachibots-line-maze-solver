@@ -22,7 +22,7 @@ This repository contains the code and documentation for **JIC**, a line-maze sol
 
 | Characteristic | Unit | Value |
 |----------------|------|-------|
-| Mass           | kg   | *To be updated* |
+| Mass           | kg   | 0.35  |
 | Length         | cm   | 19    |
 | Width          | cm   | 10.5  |
 | Height         | cm   | 9.5   |
